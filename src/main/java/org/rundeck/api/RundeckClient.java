@@ -15,27 +15,77 @@
  */
 package org.rundeck.api;
 
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.io.Serializable;
+import java.util.ArrayList;
+import java.util.Date;
+import java.util.List;
+import java.util.Map;
+import java.util.Properties;
+import java.util.Set;
+import java.util.concurrent.TimeUnit;
+
 import org.apache.commons.io.FileUtils;
 import org.apache.commons.io.IOUtils;
 import org.apache.commons.lang.StringUtils;
 import org.dom4j.Document;
 import org.rundeck.api.RundeckApiException.RundeckApiLoginException;
 import org.rundeck.api.RundeckApiException.RundeckApiTokenException;
-import org.rundeck.api.domain.*;
+import org.rundeck.api.domain.ArchiveImport;
+import org.rundeck.api.domain.ConfigProperty;
+import org.rundeck.api.domain.DeleteExecutionsResponse;
+import org.rundeck.api.domain.KeyResource;
+import org.rundeck.api.domain.ProjectConfig;
+import org.rundeck.api.domain.RundeckAbort;
+import org.rundeck.api.domain.RundeckExecution;
 import org.rundeck.api.domain.RundeckExecution.ExecutionStatus;
+import org.rundeck.api.domain.RundeckExecutionState;
+import org.rundeck.api.domain.RundeckHistory;
+import org.rundeck.api.domain.RundeckJob;
+import org.rundeck.api.domain.RundeckJobDeleteBulk;
+import org.rundeck.api.domain.RundeckJobsImportResult;
+import org.rundeck.api.domain.RundeckNode;
+import org.rundeck.api.domain.RundeckOutput;
+import org.rundeck.api.domain.RundeckProject;
+import org.rundeck.api.domain.RundeckSystemInfo;
+import org.rundeck.api.domain.RundeckToken;
 import org.rundeck.api.generator.DeleteExecutionsGenerator;
 import org.rundeck.api.generator.ProjectConfigGenerator;
 import org.rundeck.api.generator.ProjectConfigPropertyGenerator;
 import org.rundeck.api.generator.ProjectGenerator;
-import org.rundeck.api.parser.*;
+import org.rundeck.api.generator.TokenGenerator;
+import org.rundeck.api.parser.AbortParser;
+import org.rundeck.api.parser.ArchiveImportParser;
+import org.rundeck.api.parser.BulkDeleteParser;
+import org.rundeck.api.parser.DeleteExecutionsResponseParser;
+import org.rundeck.api.parser.ExecutionParser;
+import org.rundeck.api.parser.ExecutionStateParser;
+import org.rundeck.api.parser.HistoryParser;
+import org.rundeck.api.parser.JobParser;
+import org.rundeck.api.parser.JobsImportResultParser;
+import org.rundeck.api.parser.ListParser;
+import org.rundeck.api.parser.NodeParser;
+import org.rundeck.api.parser.OutputEntryParser;
+import org.rundeck.api.parser.OutputEntryParserV5;
+import org.rundeck.api.parser.OutputParser;
+import org.rundeck.api.parser.PagedResultParser;
+import org.rundeck.api.parser.ProjectConfigParser;
+import org.rundeck.api.parser.ProjectConfigPropertyParser;
+import org.rundeck.api.parser.ProjectParser;
+import org.rundeck.api.parser.ProjectParserV11;
+import org.rundeck.api.parser.RundeckTokenParser;
+import org.rundeck.api.parser.RundeckTokenParserV19;
+import org.rundeck.api.parser.SSHKeyResourceParser;
+import org.rundeck.api.parser.SystemInfoParser;
 import org.rundeck.api.query.ExecutionQuery;
 import org.rundeck.api.util.AssertUtil;
 import org.rundeck.api.util.PagedResults;
 import org.rundeck.api.util.ParametersUtil;
-
-import java.io.*;
-import java.util.*;
-import java.util.concurrent.TimeUnit;
 
 /**
  * Rundeck API client.
@@ -2453,7 +2503,7 @@ public class RundeckClient implements Serializable {
         }
     }
 
-    
+
     /*
      * System Info
      */
@@ -2484,9 +2534,16 @@ public class RundeckClient implements Serializable {
      */
     public List<RundeckToken> listApiTokens(final String user) throws RundeckApiException {
         AssertUtil.notNull(user, "user is mandatory to list API tokens for a user.");
-        return new ApiCall(this).
-                get(new ApiPathBuilder("/tokens/", user),
-                        new ListParser<RundeckToken>(new RundeckTokenParser(), "/tokens/token"));
+        if (getApiVersion() <= Version.V18.versionNumber) {
+            return new ApiCall(this).
+                    get(new ApiPathBuilder("/tokens/", user),
+                            new ListParser<RundeckToken>(new RundeckTokenParser(), "/tokens/token"));
+        }
+        else {
+            return new ApiCall(this).
+                    get(new ApiPathBuilder("/tokens/", user),
+                            new ListParser<RundeckToken>(new RundeckTokenParserV19(), "/tokens/token"));
+        }
     }
 
     /**
@@ -2495,9 +2552,16 @@ public class RundeckClient implements Serializable {
      * @throws RundeckApiException
      */
     public List<RundeckToken> listApiTokens() throws RundeckApiException {
-        return new ApiCall(this).
+        if (getApiVersion() <= Version.V18.versionNumber) {
+            return new ApiCall(this).
                 get(new ApiPathBuilder("/tokens"),
                         new ListParser<RundeckToken>(new RundeckTokenParser(), "/tokens/token"));
+        }
+        else {
+            return new ApiCall(this).
+                    get(new ApiPathBuilder("/tokens"),
+                            new ListParser<RundeckToken>(new RundeckTokenParserV19(), "/tokens/token"));
+        }
     }
 
     /**
@@ -2511,6 +2575,24 @@ public class RundeckClient implements Serializable {
         RundeckToken result = new ApiCall(this).
                 post(new ApiPathBuilder("/tokens/", user).emptyContent(),
                         new RundeckTokenParser("/token"));
+        return result.getToken();
+    }
+
+    /**
+     * Generates an api token with specific roles
+     * @param user
+     * @param roles
+     * @return
+     * @throws RundeckApiException
+     */
+    public String generateApiToken(final String user, final Set<String> roles) throws RundeckApiException{
+        AssertUtil.notNull(user, "user is mandatory to generate an API token for a user.");
+        RundeckToken request = new RundeckToken();
+        request.setUser(user);
+        request.setRoles(roles);
+        RundeckToken result = new ApiCall(this).
+                post(new ApiPathBuilder("/tokens").xml(new TokenGenerator(request).generateXmlDocument()),
+                        new RundeckTokenParserV19("/token"));
         return result.getToken();
     }
     /**
